@@ -11,6 +11,226 @@ plus follow-up fixes reported after testing:
 4. **"The side panel is still empty"** + new UI requests (v1.0.3)
 5. **"Settings say 2 languages but I only see the main language"** (v1.1.1)
 6. **"These console lines look like errors when I change the translation language"** (v1.1.2)
+7. **"Settings dropdown options are white-on-white — only the highlighted line is readable"** (v1.1.3)
+8. **"Extension context invalidated" shows as errors after updating the extension** (v1.1.4)
+9. **"Tested in Firefox – it refuses to open the side panel"** (v1.2.0)
+10. **"Firefox cannot open a sidebar from a page-button click – use a keyboard shortcut + keep the button lighting"** (v1.3.0)
+
+---
+
+## v1.3.0 – Firefox: keyboard shortcut opens the panel (your suggestion)
+
+### The hard truth you confirmed
+
+Firefox will **never** open a sidebar programmatically from a button click
+inside a normal web tab — `sidebarAction.open()` needs a user activation
+that page clicks cannot provide. So v1.3.0 stops fighting it and uses
+Firefox's own native mechanism, exactly as you suggested:
+
+### What changed
+
+1. **Keyboard shortcut** (in `firefox/manifest.json`):
+   `Ctrl+Shift+U` (Mac: `Cmd+Shift+U`) toggles the LanguageShadow panel via
+   the `_execute_sidebar_action` command. Users can change the key combo at
+   `about:addons` → gear icon → **Manage Extension Shortcuts**.
+2. **The LS button on YouTube keeps lighting up exactly as normal**
+   (green idle → orange active). Clicking it still starts the session AND
+   tries the auto-open; when Firefox refuses, a hint appears right on the
+   video: *"Press Ctrl+Shift+U to open the LanguageShadow panel (or click
+   the LS icon in the Firefox toolbar)."*
+3. The **toolbar icon click** still toggles the panel too (that gesture
+   always works).
+
+### Firefox flow in practice
+
+```
+click LS button on YouTube  →  button lights orange, session starts,
+                               hint shows "Press Ctrl+Shift+U …"
+press Ctrl+Shift+U once     →  panel opens (stays open for the session)
+```
+
+After the first time, the sidebar normally stays open while you browse
+YouTube, so later LS clicks need no shortcut at all.
+
+### Files changed for v1.3.0
+
+| File | Action |
+|------|--------|
+| `firefox/manifest.json` | **Replace** (adds the `commands` shortcut) |
+| `src/background/index.js` | **Replace** (hint text now names the shortcut) |
+| `src/content/index.js` | **Replace** (comment/UX docs only) |
+| `manifest.json` | **Replace** (version 1.3.0, keeps versions in sync) |
+| `firefox/src/*` | refreshed copy of `src/*` |
+| everything else | keep from v1.2.0 |
+
+Chrome behavior is completely unchanged — the shortcut exists only in the
+Firefox manifest.
+
+---
+
+## v1.2.0 – Firefox support (one package, both browsers)
+
+### Why Firefox refused to open the panel
+
+Firefox has **no `chrome.sidePanel` API at all** – that is Chrome-only.
+Firefox uses a completely different system: the **sidebar**
+(`sidebar_action` in the manifest + `browser.sidebarAction.*` API) and a
+classic **event page** instead of a service worker. So the Chrome build
+could never open its panel there.
+
+### What v1.2.0 ships
+
+One zip, two flavors, one shared codebase:
+
+```
+language-shadow-fix/
+├── manifest.json          ← Chrome (unchanged usage)
+├── src/…                  ← shared code (now dual-browser)
+└── firefox/
+    ├── manifest.json      ← Firefox flavor (sidebar_action, event page)
+    └── src/…              ← same code, copied
+```
+
+Shared code changes (work on BOTH browsers, Chrome behavior untouched):
+
+- All extension-API calls go through `browser` (Firefox) / `chrome`
+  (Chrome) automatically.
+- The background script no longer imports `shared/constants.js` – the few
+  needed constants are inlined, so it runs as a classic Firefox event page
+  AND as a Chrome service worker.
+- Firefox: clicking the **LanguageShadow icon in the Firefox toolbar**
+  toggles the sidebar open/closed. The LS button on the YouTube page also
+  tries to open it; if Firefox refuses (it sometimes demands the toolbar
+  click for user-activation reasons), the video shows a hint telling you
+  to click the toolbar icon once.
+
+### Firefox install (temporary add-on)
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on…**
+3. Select `firefox/manifest.json` (inside the folder you unpacked)
+4. Open a YouTube video → click the orange **LS** button. If the panel does
+   not pop open by itself, click the **LS icon in the Firefox toolbar**
+   once (click the puzzle-piece icon → pin LanguageShadow to make it always
+   visible).
+
+> Note: Firefox removes **temporary** add-ons when Firefox restarts. For a
+> permanent install the extension must be signed via addons.mozilla.org
+> (Developer Hub → distribute yourself) — same code, just upload the
+> `firefox/` folder zipped.
+
+### Notes for the Firefox flavor
+
+- Requires Firefox **128+** (`world: "MAIN"` content scripts, MV3).
+- Recording/scoring: the local worker (`127.0.0.1:8000`) only gets data if
+  you grant *Access your data for 127.0.0.1* in the extension's
+  **Permissions** tab; offline mode works regardless.
+- No popup.html needed in Firefox: the toolbar button belongs to the
+  sidebar toggle.
+
+### Files changed for v1.2.0
+
+| File | Action |
+|------|--------|
+| `src/background/index.js` | **Replace** (inlined constants, browser/sidePanel branching, Firefox toolbar toggle) |
+| `src/content/bridge.js` | **Replace** (browser/chrome alias) |
+| `src/sidepanel/index.js` | **Replace** (browser/chrome alias) |
+| `src/content/index.js` | **Replace** (surfaces the toolbar hint if Firefox blocks auto-open) |
+| `manifest.json` | **Replace** (version 1.2.0) |
+| `firefox/` | **New folder** – Firefox manifest + copy of src |
+| `src/sidepanel/style.css`, `src/sidepanel/index.html` | keep from v1.1.3 |
+
+---
+
+## v1.1.4 – "Extension context invalidated" is not a real error
+
+### What you saw
+
+After reloading the extension (to install v1.1.3), the Errors view showed:
+
+```
+[LS] runtime message failed: Extension context invalidated.
+[LS] storage.set failed: Extension context invalidated.
+```
+
+### Why it happened (it is not a bug)
+
+When you click **Reload** at `chrome://extensions`, the extension's brain is
+swapped, but **the already-open YouTube tab keeps running the OLD injected
+script**. That old script's connection to the extension is now dead — so
+every save/state-push it attempts fails with exactly this message. It stops
+the moment you press **F5** on the YouTube tab (which you should always do
+after reloading the extension).
+
+### What v1.1.4 changes
+
+In `src/content/index.js`:
+
+- This specific case is now **detected and downgraded**: instead of repeating
+  warnings on every state push (every 150 ms), it logs **one single quiet
+  info line**: `Extension was reloaded or updated – this tab still runs the
+  old script. Refresh the page (F5) to reconnect.`
+- After the first detection all further bridge calls fail **fast and
+  silently** (no more message/timeout churn from the still-running loops).
+- Genuine failures (real storage/runtime problems while the extension is
+  alive) still warn as before.
+
+### Files to replace for v1.1.4
+
+| File | Action |
+|------|--------|
+| `src/content/index.js` | **Replace** (context-invalidated handling) |
+| `manifest.json` | **Replace** (version 1.1.4) |
+| everything else | keep from v1.1.3 |
+
+### How to verify
+
+1. Reload the extension at `chrome://extensions`.
+2. WITHOUT refreshing the YouTube tab, watch the console → you get **one**
+   quiet info line, then silence (no orange entries).
+3. Press F5 on the YouTube tab → everything reconnects and works.
+
+---
+
+## v1.1.3 – Dropdown options readable again (white-on-white fix)
+
+### The problem
+
+Opening the Main/Translation language dropdown in the settings gear showed
+every option as **near-white text on a white popup** — only the
+blue-highlighted row was readable (your screenshot).
+
+### Why it happened
+
+The panel is dark-themed, so the `<select>` text is near-white (`#faf7f2`).
+But the page never told Chrome "this page is dark", so Chrome painted the
+native dropdown popup with its default **light** background → white text on
+white background.
+
+### The fix (yes, it really is just CSS)
+
+In `src/sidepanel/style.css`:
+
+- `:root { color-scheme: dark; }` — tells Chrome to render all native form
+  controls (dropdown popup, scrollbars) in dark style. This is the main fix.
+- Explicit `option` colors as a safety net for platforms that ignore
+  `color-scheme`: dark rows (`#2c251e` background / `#faf7f2` text), and the
+  hovered/selected row in **orange** to match the panel theme.
+
+### Files to replace for v1.1.3
+
+| File | Action |
+|------|--------|
+| `src/sidepanel/style.css` | **Replace** (color-scheme + option colors) |
+| `manifest.json` | **Replace** (version 1.1.3) |
+| everything else | keep from v1.1.2 |
+
+### How to verify
+
+1. Reload the extension at `chrome://extensions` (the side panel file changed,
+   so also close and reopen the side panel).
+2. Open the settings gear and click any dropdown → all languages are readable
+   (dark rows, orange highlight).
 
 ---
 

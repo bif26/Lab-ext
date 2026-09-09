@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "LanguageShadow Offline",
+  "version": "1.3.0",
+  "description": "AI Pronunciation Feedback & Shadowing for YouTube (Offline)",
+  "author": "Local",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "languageshadow@offline.local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "background": {
+    "scripts": ["src/background/index.js"]
+  },
+  "action": {
+    "default_title": "LanguageShadow – click to open/close the panel"
+  },
+  "sidebar_action": {
+    "default_panel": "src/sidepanel/index.html",
+    "default_title": "LanguageShadow"
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Open/close the LanguageShadow panel"
+    }
+  },
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["src/content/bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["src/content/index.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "http://127.0.0.1:8000/*",
+    "http://127.0.0.1:8765/*"
+  ]
+}

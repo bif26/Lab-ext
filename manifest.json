@@ -15,7 +15,7 @@
     "default_title": "LanguageShadow"
   },
   "background": {
-    "service_worker": "src/background/index.js",
+    "scripts": ["src/background/index.js"],
     "type": "module"
   },
   "side_panel": {
@@ -25,6 +25,11 @@
     "sidePanel",
     "storage",
     "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "http://127.0.0.1:8000/",
+    "http://127.0.0.1:8765/"
   ],
   "content_scripts": [
     {
@@ -40,11 +45,11 @@
       "world": "MAIN"
     }
   ],
-  "host_permissions": [
-    "*://*.youtube.com/*",
-    "http://127.0.0.1:8000/",
-    "http://127.0.0.1:8765/"
-  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "languageshadow@your-email.com"
+    }
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:8000 http://127.0.0.1:8765; default-src 'self';"
   }

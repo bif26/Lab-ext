@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LanguageShadow</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===== Header ===== -->
+    <header class="header">
+      <h1>Language<span>Shadow</span></h1>
+      <div class="header-actions">
+        <button id="btn-settings" class="icon-btn" title="Settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===== Language pair (translation shown UNDER main language) ===== -->
+    <div id="lang-pair" class="lang-pair">
+      <div class="lang-main"><span class="flag">🌐</span><span class="lang-name">—</span></div>
+      <div class="lang-sub"><span class="arrow">↓</span><span class="lang-name">—</span></div>
+    </div>
+
+    <!-- ===== Settings panel (gear) ===== -->
+    <section id="settings-panel" class="settings-panel">
+      <div class="setting">
+        <label for="set-target">Main language (practice)</label>
+        <select id="set-target"></select>
+      </div>
+      <div class="setting">
+        <label for="set-native">Translation language</label>
+        <select id="set-native"></select>
+      </div>
+      <div class="setting">
+        <label for="set-mode">Subtitles shown</label>
+        <select id="set-mode">
+          <option value="both">Both</option>
+          <option value="target">Main only</option>
+          <option value="native">Translation only</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label for="set-repeat">Repeats per line</label>
+        <select id="set-repeat">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </div>
+      <button id="btn-save-settings" class="save-btn">Save</button>
+    </section>
+
+    <!-- ===== Main area ===== -->
+    <main class="practice-area">
+
+      <!-- Empty state -->
+      <div id="view-waiting" class="waiting-card hidden">
+        <div class="icon">🎧</div>
+        <h2>No active session</h2>
+        <p>Open a YouTube video and press the orange <b>LS</b> button in the player controls to start shadowing.</p>
+      </div>
+
+      <!-- Loading state -->
+      <div id="view-loading" class="waiting-card hidden">
+        <div class="spinner"></div>
+        <h2>Fetching subtitles…</h2>
+        <p id="loading-hint">Capturing captions from the player</p>
+      </div>
+
+      <!-- Session view -->
+      <section id="view-session" class="hidden session">
+
+        <div class="video-title" id="video-title"></div>
+
+        <!-- Current line -->
+        <div id="current-cue" class="subtitle-display">
+          <div class="subtitle-target" id="cur-target">—</div>
+          <div class="subtitle-native" id="cur-native"></div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+          <button id="btn-prev" class="ctrl-btn" title="Previous line">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+          </button>
+          <button id="btn-repeat" class="ctrl-btn" title="Repeat line">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </button>
+          <button id="btn-record" class="ctrl-btn record-btn" title="Record &amp; assess">
+            <svg id="mic-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11z"/></svg>
+            <span id="rec-timer"></span>
+          </button>
+          <button id="btn-next" class="ctrl-btn" title="Next line">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+          </button>
+        </div>
+
+        <!-- Score / takes -->
+        <div id="score-area" class="score-area hidden"></div>
+
+        <!-- Transcript -->
+        <div class="transcript-head">
+          <span>Transcript</span>
+          <span id="cue-count" class="cue-count"></span>
+        </div>
+        <div id="transcript" class="transcript-area"></div>
+
+      </section>
+    </main>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
