@@ -17,6 +17,9 @@
 (() => {
   const TAG = '[LS][bridge]';
 
+  // Firefox exposes promise-based APIs as `browser`; Chrome MV3 as `chrome`.
+  const api = (typeof browser !== 'undefined') ? browser : chrome;
+
   // ------------------------------------------------------------------
   // 1) Requests coming FROM the MAIN world
   // ------------------------------------------------------------------
@@ -35,19 +38,19 @@
           response = { ok: true };
           break;
         case 'runtime':
-          response = await chrome.runtime.sendMessage(payload);
+          response = await api.runtime.sendMessage(payload);
           break;
         case 'storage.get':
-          response = await chrome.storage.local.get(keys ?? null);
+          response = await api.storage.local.get(keys ?? null);
           break;
         case 'storage.sync.get':
-          response = await chrome.storage.sync.get(keys ?? null);
+          response = await api.storage.sync.get(keys ?? null);
           break;
         case 'storage.set':
-          response = await chrome.storage.local.set(payload);
+          response = await api.storage.local.set(payload);
           break;
         case 'storage.remove':
-          response = await chrome.storage.local.remove(keys ?? []);
+          response = await api.storage.local.remove(keys ?? []);
           break;
         default:
           error = 'Unknown bridge kind: ' + kind;
@@ -71,7 +74,7 @@
   // 2) Messages from the extension (background / side panel) -> MAIN world
   //    e.g. side panel commands relayed via RELAY_TO_YOUTUBE_TAB.
   // ------------------------------------------------------------------
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       window.postMessage({ __lsToMain: true, message }, window.location.origin);
     } catch (e) {

@@ -394,6 +394,73 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---------- Takes (numbered recordings for the current caption) ---------- */
+.takes-bar {
+  flex-shrink: 0;
+  background: var(--ls-surface-strong);
+  border: 1px solid var(--ls-border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.takes-nav { display: flex; align-items: center; gap: 4px; }
+.tnav {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--ls-control-border);
+  background: var(--ls-control);
+  color: var(--ls-text-soft);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+.tnav:disabled { opacity: 0.35; cursor: not-allowed; }
+.tk-count { font-size: 10.5px; font-weight: 800; color: var(--ls-text-muted); min-width: 30px; text-align: center; }
+.takes-chips { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 40px; }
+.takes-actions { display: flex; gap: 5px; }
+.tbtn {
+  border: 1px solid var(--ls-control-border);
+  background: var(--ls-control);
+  color: var(--ls-text-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tbtn:hover { color: var(--ls-accent); }
+.tbtn.primary { background: var(--ls-accent); border-color: var(--ls-accent); color: #fff; }
+.tbtn.primary:hover { filter: brightness(1.08); color: #fff; }
+.tbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.takes-hint { flex-basis: 100%; font-size: 9.5px; color: var(--ls-text-muted); line-height: 1.4; }
+.take-chip.active { border-color: var(--ls-accent); background: var(--ls-accent-soft); color: var(--ls-accent); }
+.score-pill { margin-left: 5px; padding: 0 5px; border-radius: 999px; font-size: 9px; font-weight: 800; }
+.score-pill.good { background: #4ade8033; color: #4ade80; }
+.score-pill.ok { background: #facc1533; color: #facc15; }
+.score-pill.bad { background: #f8717133; color: #f87171; }
+.pace-line { font-size: 10.5px; color: var(--ls-text-muted); margin-top: 2px; }
+.mini-btn {
+  border: 1px solid var(--ls-control-border);
+  background: var(--ls-control);
+  color: var(--ls-text-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mini-btn:hover { color: var(--ls-accent); }
+
+/* Word-level score colors (score card) */
+.word.word-good { background: #4ade8026; color: #4ade80; }
+.word.word-ok { background: #facc1526; color: #facc15; }
+.word.word-bad { background: #f8717126; color: #f87171; }
+
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

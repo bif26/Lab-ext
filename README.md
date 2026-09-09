@@ -15,6 +15,96 @@ plus follow-up fixes reported after testing:
 8. **"Extension context invalidated" shows as errors after updating the extension** (v1.1.4)
 9. **"Tested in Firefox – it refuses to open the side panel"** (v1.2.0)
 10. **"Firefox cannot open a sidebar from a page-button click – use a keyboard shortcut + keep the button lighting"** (v1.3.0)
+11. **"I need the API example (audio + caption in, best scoring out), a mic-permission page, multi-take recording with a Score button, and auto-cleanup for RAM"** (v1.4.0)
+
+---
+
+## v1.4.0 – Multi-take recording, Score button, mic page, API contract
+
+### New in the panel
+
+- **Multi-take recording**: every take belongs to the caption that was active
+  when you started recording. Takes appear as **numbered chips** (1, 2, 3 …)
+  in a new bar under the record button, with ◀ ▶ arrows to move between them
+  (`2/3`), a **▶ Play** button to hear what you said, and a **Score** button.
+- **Score button (explicit!)**: recording no longer auto-scores. Select any
+  take → press **Score** → ONLY that take is sent (its audio + the caption
+  you said + the language) to the API, and the result is **saved on that
+  take**. Chip shows the score pill (green/yellow/red). Switch takes → each
+  shows its own saved result card. Record 2 takes, score only take 2 → take 1
+  stays unscored until YOU score it.
+- **Score card** now shows: overall /100, the four sub-scores (accuracy,
+  fluency, prosody, completeness), **⏱ pace (words/min + duration)**, and
+  color-coded word chips so you can analyze what you said correctly.
+- **RAM cleanup**: moving to the next caption automatically deletes all takes
+  + revokes the audio blobs (also on video change / session stop). Minimum
+  memory usage, exactly as requested.
+- The caption text is captured at **record start**, so a cue change during a
+  take can never mix up which sentence was being practiced.
+
+### Microphone permission page (Chrome + Firefox)
+
+Settings (gear) → **Microphone → “Allow / test”** opens `mic-check.html`:
+
+- one-time `getUserMedia` permission request with a big button,
+- **live level meter** so you SEE the mic works,
+- stores the grant flag (`lsMicGranted`) and gives browser-specific
+  instructions if the permission is stuck (Chrome:
+  `chrome://settings/content/microphone`; Firefox:
+  `about:preferences#privacy` → Permissions → Microphone).
+
+### The API contract → `API.md` + `example-server/server.py`
+
+The package now documents exactly what the extension sends and expects:
+
+```
+POST http://127.0.0.1:8000/api/assess-speech
+{ "audio_base64": "...webm/opus...", "reference_text": "<the caption>", "language": "de-DE" }
+```
+
+Best-practice scoring response (0–100 integers):
+
+```json
+{
+  "status": "OK",
+  "overall": 84,
+  "subscores": { "accuracy": 88, "fluency": 81, "prosody": 76, "completeness": 100 },
+  "pace": { "wpm": 118, "duration_ms": 4200 },
+  "words": [ { "word": "heute", "accuracy": 74, "errorType": "Mispronunciation" } ],
+  "recognized": "ich habe heute langen tag gehabt"
+}
+```
+
+- `API.md` — full contract, field aliases the panel tolerates, curl example,
+  and the recipe (ASR → alignment → sub-scores → overall weights).
+- `example-server/server.py` — **runnable FastAPI example** implementing the
+  whole response (faster-whisper ASR if installed, word-level difflib
+  alignment, pace/fluency heuristics). Run with
+  `uvicorn server:app --port 8000`.
+
+### Files to replace for v1.4.0
+
+| File | Action |
+|------|--------|
+| `src/sidepanel/index.js` | **Replace** (takes bar, Score button, per-take results, auto cleanup) |
+| `src/sidepanel/index.html` | **Replace** (takes bar element + mic-check button) |
+| `src/sidepanel/style.css` | **Replace** (takes bar, score pills, word colors) |
+| `src/sidepanel/mic-check.html` + `mic-check.js` | **Add** (microphone permission page) |
+| `API.md` | **Add** (scoring API contract) |
+| `example-server/server.py` | **Add** (runnable example API) |
+| `manifest.json` | **Replace** (version 1.4.0) |
+| `firefox/` | refreshed copy (same files, Firefox manifest 1.4.0) |
+| `src/content/*`, `src/background/index.js` | unchanged from v1.3.0 |
+
+### How to verify
+
+1. Reload the extension (+ F5 the YouTube tab; Firefox: reload in
+   about:debugging).
+2. Settings → Microphone → “Allow / test” → permit → green meter moves.
+3. Start shadowing → record 2–3 takes on one line → numbered chips appear.
+4. ◀ ▶ between takes, ▶ Play listens, select take 2 → **Score** → only that
+   take is scored; chip 2 shows the pill; switch to take 1 → no result yet.
+5. Jump to the next caption → all takes vanish instantly (RAM freed).
 
 ---
 

@@ -884,7 +884,17 @@
     // IMPORTANT: ask the background to open the side panel FIRST, while the
     // user gesture (click) is still fresh. chrome.sidePanel.open() requires
     // a user gesture, and the bridge -> background round-trip preserves it.
-    sendRuntime({ type: RUNTIME_MESSAGE.OPEN_SIDE_PANEL });
+    // Firefox: a page click can NEVER open the sidebar (no user activation
+    // for sidebarAction.open from a web tab) – background replies with a
+    // hint and we show it on the video: press Ctrl+Shift+U (the manifest's
+    // _execute_sidebar_action shortcut) or click the LS toolbar icon.
+    // The button itself still lights up orange (active) as normal either way.
+    sendRuntime({ type: RUNTIME_MESSAGE.OPEN_SIDE_PANEL }).then((reply) => {
+      // Firefox may refuse the automatic panel open (no user activation for
+      // sidebarAction.open) – background answers { ok:false, hint } and we
+      // surface that hint directly on the video.
+      if (reply && reply.ok === false && reply.hint) showTransientOverlayMessage(reply.hint);
+    });
 
     session.active = true;
     setButtonActive(true);

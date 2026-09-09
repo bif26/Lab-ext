@@ -1,5 +1,5 @@
 /**
- * LanguageShadow – side panel (v1.1.2) – VANILLA JS, no React, no build step.
+ * LanguageShadow – side panel (v1.4.0) – VANILLA JS, no React, no build step.
  *
  * Replaces the old React/JSX bundle which crashed with
  * "Uncaught SyntaxError: Unexpected token '<'" (uncompiled JSX).
@@ -11,6 +11,14 @@
  * Commands (sent to background → relayed to the YouTube tab):
  *   LS_SEEK_CUE / LS_NEXT_SENTENCE / LS_PREV_SENTENCE / LS_REPEAT_SEGMENT
  *   LS_SETTINGS_UPDATED  – live language changes from the gear menu
+ *
+ * Recording model (v1.4.0):
+ *   - Every take belongs to the caption that was active when it started.
+ *   - Takes are numbered (1, 2, 3 …), selectable, playable, and scored
+ *     EXPLICITLY with the Score button (only the selected take is sent).
+ *   - Each take keeps its own score/result until the user moves to another
+ *     caption — then takes are wiped automatically (blob URLs revoked, RAM).
+ *   - API contract: see API.md in the package root.
  */
 (() => {
   // ------------------------------------------------------------------
@@ -64,23 +72,30 @@
   let source = null;  // lsSubtitleSource
   let activeIndex = -1;
 
-  // Recording
+  // Recording & takes (multiple recordings per caption line)
   let mediaRecorder = null;
   let mediaStream = null;
   let recChunks = [];
   let recTimer = null;
   let recStartTs = 0;
-  const takes = [];
+  let recRef = '';        // caption text captured at record START
+  let recLang = '';       // language captured at record START
+  const takes = [];       // { blob, url, label, reference, language, score, result }
+  let selTake = -1;       // currently selected take index
+  let curCueKey = -1;     // caption change detector → auto cleanup
+  const takeAudio = new Audio(); // single playback element (paused on switch)
 
   // ------------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------------
+  // Firefox exposes promise-based APIs as `browser`; Chrome MV3 as `chrome`.
+  const api = (typeof browser !== 'undefined') ? browser : chrome;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   const flagOf = (code) => FLAGS[(code || '').split('-')[0]] || '🌐';
   const langLabel = (code) => (LANGUAGES.find((x) => x[0] === code) || [null, code || '—'])[1];
-  const relay = (payload) => chrome.runtime.sendMessage({ type: RELAY_TYPE, payload }).catch(() => {});
+  const relay = (payload) => api.runtime.sendMessage({ type: RELAY_TYPE, payload }).catch(() => {});
 
   // ------------------------------------------------------------------
   // Rendering
@@ -164,6 +179,8 @@
     const idx = state && typeof state.currentCueIndex === 'number' ? state.currentCueIndex : -1;
     if (idx === activeIndex && state) { renderCurrent(); return; }
     activeIndex = idx;
+    // Moving to another caption frees the recordings of the old one (RAM).
+    if (idx !== curCueKey) { curCueKey = idx; clearTakes(); }
     renderCurrent();
     const box = $('transcript');
     const prev = box.querySelector('.transcript-cue.active');
@@ -179,7 +196,7 @@
 
   function renderAll() {
     const isActive = !!(state && state.active);
-    if (!isActive) { showView('waiting'); return; }
+    if (!isActive) { clearTakes(); showView('waiting'); return; }
     if (!source || !source.cues || !source.cues.length) { showView('loading'); return; }
     showView('session');
     $('video-title').textContent = (state && state.title) || '';
@@ -189,45 +206,156 @@
   }
 
   // ------------------------------------------------------------------
-  // Assessment result rendering
+  // Assessment result parsing (tolerant to many API shapes – see API.md)
   // ------------------------------------------------------------------
   function extractScore(r) {
     if (!r) return null;
-    const cand = [r.pronunciation_score, r.pronunciationScore, r.accuracy_score, r.score,
+    const cand = [r.overall, r.overall_score, r.pronunciation_score, r.pronunciationScore, r.accuracy_score, r.score,
       r.overall && r.overall.score, r.pronunciationAssessment && r.pronunciationAssessment.score];
     return cand.find((v) => typeof v === 'number') ?? null;
   }
 
   function extractSubScores(r) {
     if (!r) return [];
+    const s = r.subscores || {};
     const p = r.pronunciationAssessment || r;
     return [
-      ['Accuracy', p.accuracy_score ?? p.accuracyScore],
-      ['Fluency', p.fluency_score ?? p.fluencyScore],
-      ['Prosody', p.prosody_score ?? p.prosodyScore],
-      ['Complete', p.completeness_score ?? p.completenessScore]
+      ['Accuracy', s.accuracy ?? p.accuracy_score ?? p.accuracyScore],
+      ['Fluency', s.fluency ?? p.fluency_score ?? p.fluencyScore],
+      ['Prosody', s.prosody ?? p.prosody_score ?? p.prosodyScore],
+      ['Complete', s.completeness ?? p.completeness_score ?? p.completenessScore]
     ].filter(([, v]) => typeof v === 'number');
   }
 
   function extractWords(r) {
     const w = (r && (r.words || r.word_list || (r.pronunciationAssessment && r.pronunciationAssessment.words))) || null;
     if (!Array.isArray(w)) return [];
-    return w.map((x) => ({ word: x.word || x.text || '', score: typeof x.score === 'number' ? x.score :
-      (x.pronunciationAssessment && typeof x.pronunciationAssessment.accuracyScore === 'number' ? x.pronunciationAssessment.accuracyScore : null) }))
-      .filter((x) => x.word);
+    return w.map((x) => {
+      let sc = null;
+      for (const v of [x.score, x.accuracy, x.accuracyScore, x.pronunciationAssessment && x.pronunciationAssessment.accuracyScore]) {
+        if (typeof v === 'number') { sc = v; break; }
+      }
+      return { word: x.word || x.text || '', score: sc };
+    }).filter((x) => x.word);
   }
 
-  function renderScore(result, offline) {
+  function extractPace(r) {
+    if (!r) return '';
+    const wpm = r.wpm ?? (r.pace && r.pace.wpm);
+    const ms = r.duration_ms ?? r.durationMs ?? (r.pace && (r.pace.duration_ms ?? r.pace.durationMs));
+    if (typeof wpm === 'number' && typeof ms === 'number') return `⏱ ${Math.round(wpm)} words/min · ${(ms / 1000).toFixed(1)}s`;
+    if (typeof wpm === 'number') return `⏱ ${Math.round(wpm)} words/min`;
+    if (typeof ms === 'number') return `⏱ ${(ms / 1000).toFixed(1)}s`;
+    return '';
+  }
+
+  // ------------------------------------------------------------------
+  // Takes – numbered recordings for the CURRENT caption only
+  // ------------------------------------------------------------------
+  function clearTakes() {
+    takes.forEach((t) => { try { URL.revokeObjectURL(t.url); } catch (e) { /* ignore */ } });
+    takes.length = 0;
+    selTake = -1;
+    try { takeAudio.pause(); } catch (e) { /* ignore */ }
+    $('score-area').classList.add('hidden');
+    renderTakesBar();
+  }
+
+  function renderTakesBar() {
+    const bar = $('takes-bar');
+    if (!bar) return;
+    if (!takes.length) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    bar.classList.remove('hidden');
+    const chips = takes.map((t, i) =>
+      `<button class="take-chip${i === selTake ? ' active' : ''}" data-i="${i}" title="Take ${i + 1}${t.reference ? ': ' + esc(t.reference).slice(0, 40) : ''}">` +
+      `${i + 1}` +
+      (t.score != null ? `<span class="score-pill ${t.score >= 80 ? 'good' : t.score >= 60 ? 'ok' : 'bad'}">${Math.round(t.score)}</span>` : '') +
+      `</button>`).join('');
+    bar.innerHTML =
+      `<div class="takes-nav">` +
+      `<button class="tnav" id="tk-prev" ${takes.length < 2 ? 'disabled' : ''} title="Previous take">◀</button>` +
+      `<span class="tk-count">${selTake >= 0 ? selTake + 1 : '–'}/${takes.length}</span>` +
+      `<button class="tnav" id="tk-next" ${takes.length < 2 ? 'disabled' : ''} title="Next take">▶</button>` +
+      `</div>` +
+      `<div class="takes-chips">${chips}</div>` +
+      `<div class="takes-actions">` +
+      `<button class="tbtn" id="tk-play" ${selTake < 0 ? 'disabled' : ''} title="Listen to the selected take">▶ Play</button>` +
+      `<button class="tbtn primary" id="tk-score" ${selTake < 0 ? 'disabled' : ''} title="Send ONLY the selected take + its caption to the scoring API">Score</button>` +
+      `</div>` +
+      `<div class="takes-hint">Score sends the selected take + the caption you said to the API. Changing caption deletes all takes (saves RAM).</div>`;
+    bar.querySelectorAll('.take-chip').forEach((chip) =>
+      chip.addEventListener('click', () => selectTake(Number(chip.dataset.i))));
+    const p = bar.querySelector('#tk-prev');
+    const n = bar.querySelector('#tk-next');
+    if (p) p.addEventListener('click', () => selectTake((selTake - 1 + takes.length) % takes.length));
+    if (n) n.addEventListener('click', () => selectTake((selTake + 1) % takes.length));
+    const play = bar.querySelector('#tk-play');
+    if (play) play.addEventListener('click', playSelected);
+    const sc = bar.querySelector('#tk-score');
+    if (sc) sc.addEventListener('click', scoreSelected);
+  }
+
+  function selectTake(i) {
+    if (i < 0 || i >= takes.length) return;
+    selTake = i;
+    try { takeAudio.pause(); } catch (e) { /* ignore */ }
+    renderTakesBar();
+    const t = takes[i];
+    if (t.result) renderScoreCard(t.result, i);      // show the saved result of THIS take
+    else $('score-area').classList.add('hidden');
+  }
+
+  function playSelected() {
+    if (selTake < 0) return;
+    try { takeAudio.pause(); } catch (e) { /* ignore */ }
+    takeAudio.src = takes[selTake].url;
+    takeAudio.play().catch(() => {});
+  }
+
+  async function scoreSelected() {
+    if (selTake < 0) return;
+    const i = selTake;
+    const t = takes[i];
+    const btn = $('tk-score');
+    if (btn) { btn.disabled = true; btn.textContent = '… scoring'; }
     const area = $('score-area');
     area.classList.remove('hidden');
-    if (offline) {
-      area.innerHTML = `<div class="score-offline">✓ Take saved. Local assessment server (127.0.0.1:8000) is offline — start it to get pronunciation scores.</div>` + takesHtml();
-      return;
+    area.innerHTML = `<div class="score-title">Scoring take ${i + 1}…</div>`;
+    const base64 = await new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result).split(',')[1] || '');
+      fr.readAsDataURL(t.blob);
+    });
+    let result = null;
+    try {
+      result = await api.runtime.sendMessage({
+        name: 'assess-speech',
+        body: { audio_base64: base64, reference_text: t.reference, language: t.language }
+      });
+    } catch (e) {
+      result = { status: 'ERROR', error: e.message };
     }
+    const offline = !!result && result.status === 'ERROR' && /fetch|network/i.test(result.error || '');
+    // The score is SAVED on this take – switching takes shows each own result.
+    t.result = result;
+    t.score = extractScore(result);
+    if (btn) { btn.disabled = false; btn.textContent = 'Score'; }
+    renderTakesBar();
+    if (offline) {
+      area.innerHTML = `<div class="score-offline">✓ Take ${i + 1} kept (score pending). The local scoring server (127.0.0.1:8000) is offline — start it to get scores. Contract: API.md in the package.</div>`;
+    } else {
+      renderScoreCard(result, i);
+    }
+  }
+
+  function renderScoreCard(result, takeIdx) {
+    const area = $('score-area');
+    area.classList.remove('hidden');
     const score = extractScore(result);
     const subs = extractSubScores(result);
     const words = extractWords(result);
-    let html = '<div class="score-header"><span class="score-title">Pronunciation</span>' +
+    const pace = extractPace(result);
+    let html = '<div class="score-header"><span class="score-title">Pronunciation · Take ' + (takeIdx + 1) + '</span>' +
       '<button class="score-close" id="score-close">✕</button></div>';
     if (score != null) {
       html += `<div class="score-number">${Math.round(score)}<small> /100</small></div>`;
@@ -236,6 +364,7 @@
     } else {
       html += `<div class="score-error">Assessment returned no score.</div>`;
     }
+    if (pace) html += `<div class="pace-line">${esc(pace)}</div>`;
     if (subs.length) {
       html += '<div class="sub-scores">' + subs.map(([k, v]) =>
         `<div class="sub-score"><span>${esc(k)}</span><b>${Math.round(v)}</b></div>`).join('') + '</div>';
@@ -246,25 +375,9 @@
         return `<span class="word ${cls}">${esc(word)}${ws != null ? ` · ${Math.round(ws)}` : ''}</span>`;
       }).join('') + '</div>';
     }
-    html += takesHtml();
     area.innerHTML = html;
     const close = $('score-close');
     if (close) close.addEventListener('click', () => area.classList.add('hidden'));
-  }
-
-  function takesHtml() {
-    if (!takes.length) return '';
-    return '<div class="takes-list">' + takes.map((t, i) =>
-      `<button class="take-chip" data-i="${i}">▶ ${esc(t.label)}${t.score != null ? ` · ${Math.round(t.score)}` : ''}</button>`).join('') + '</div>';
-  }
-
-  function bindTakeChips() {
-    $('score-area').querySelectorAll('.take-chip').forEach((chip) => {
-      chip.addEventListener('click', () => {
-        const t = takes[Number(chip.dataset.i)];
-        if (t) new Audio(t.url).play();
-      });
-    });
   }
 
   // ------------------------------------------------------------------
@@ -277,11 +390,16 @@
     }
     const cur = state && state.currentCue;
     if (!cur || !cur.target) { alert('No subtitle line is active right now — play the video a little first.'); return; }
+    // Freeze WHICH caption this take belongs to at record start, so a later
+    // cue change cannot mix up the reference text.
+    recRef = cur.target;
+    recLang = settings.targetLanguage;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      renderScore(null, false);
-      $('score-area').innerHTML = `<div class="score-error">Microphone unavailable: ${esc(e.message)}</div>`;
+      const area = $('score-area');
+      area.classList.remove('hidden');
+      area.innerHTML = `<div class="score-error">Microphone unavailable: ${esc(e.message)}<br>Use “Allow / test” in the settings (gear) or open mic-check.html.</div>`;
       return;
     }
     recChunks = [];
@@ -304,32 +422,20 @@
     $('rec-timer').textContent = '';
     if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
     const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-    const cur = state && state.currentCue;
-    const reference = cur ? cur.target : '';
-    const language = settings.targetLanguage;
-
-    const base64 = await new Promise((res) => {
-      const fr = new FileReader();
-      fr.onload = () => res(String(fr.result).split(',')[1] || '');
-      fr.readAsDataURL(blob);
-    });
-
-    let result = null;
-    try {
-      result = await chrome.runtime.sendMessage({
-        name: 'assess-speech',
-        body: { audio_base64: base64, reference_text: reference, language }
-      });
-    } catch (e) {
-      result = { status: 'ERROR', error: e.message };
-    }
-
-    const offline = !result || result.status === 'ERROR' && /fetch|network/i.test(result.error || '');
-    const score = extractScore(result);
-    takes.push({ url: URL.createObjectURL(blob), label: fmtTime((Date.now() - recStartTs) / 1000), score });
-    renderScore(result, offline);
-    bindTakeChips();
+    const durMs = Date.now() - recStartTs;
     mediaRecorder = null;
+    if (!blob.size) return;
+    // NO automatic scoring – the user picks a take and presses Score.
+    takes.push({
+      blob,
+      url: URL.createObjectURL(blob),
+      label: (durMs / 1000).toFixed(1) + 's',
+      reference: recRef,
+      language: recLang || settings.targetLanguage,
+      score: null,
+      result: null
+    });
+    selectTake(takes.length - 1);
   }
 
   // ------------------------------------------------------------------
@@ -351,7 +457,7 @@
     settings.subtitleDisplayMode = $('set-mode').value;
     settings.repetitionCount = Number($('set-repeat').value) || 1;
     try {
-      await chrome.storage.local.set({
+      await api.storage.local.set({
         nativeLanguage: settings.nativeLanguage,
         targetLanguage: settings.targetLanguage,
         subtitleDisplayMode: settings.subtitleDisplayMode,
@@ -391,6 +497,10 @@
     $('btn-next').addEventListener('click', () => relay({ type: CMD.NEXT_SENTENCE }));
     $('btn-repeat').addEventListener('click', () => relay({ type: CMD.REPEAT_SEGMENT }));
     $('btn-record').addEventListener('click', toggleRecording);
+    const mic = $('btn-mic-check');
+    if (mic) mic.addEventListener('click', () => {
+      api.tabs.create({ url: api.runtime.getURL('src/sidepanel/mic-check.html') });
+    });
   }
 
   async function init() {
@@ -398,7 +508,7 @@
     fillLanguageSelects();
     renderLangPair();
     try {
-      const data = await chrome.storage.local.get([STATE_KEY, SOURCE_KEY,
+      const data = await api.storage.local.get([STATE_KEY, SOURCE_KEY,
         'nativeLanguage', 'targetLanguage', 'subtitleDisplayMode', 'repetitionCount']);
       if (data.nativeLanguage) settings.nativeLanguage = data.nativeLanguage;
       if (data.targetLanguage) settings.targetLanguage = data.targetLanguage;
@@ -412,7 +522,7 @@
       showView('waiting');
     }
 
-    chrome.storage.onChanged.addListener((changes, area) => {
+    api.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
       if (changes[STATE_KEY]) {
         state = changes[STATE_KEY].newValue;
@@ -424,6 +534,7 @@
       if (changes[SOURCE_KEY]) {
         source = changes[SOURCE_KEY].newValue;
         activeIndex = -2;
+        clearTakes(); // new video / new cue list – free all recordings
         renderAll();
       }
       // Live settings change (e.g. saved from another panel instance)

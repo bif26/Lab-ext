@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LanguageShadow – Microphone</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; }
+    .mic-card {
+      max-width: 420px;
+      background: var(--ls-surface-strong);
+      border: 1px solid var(--ls-border);
+      border-radius: 16px;
+      padding: 24px 22px;
+      text-align: center;
+    }
+    .mic-card h1 { font-size: 18px; font-weight: 800; margin-bottom: 10px; }
+    .mic-card h1 span { color: var(--ls-accent); }
+    .mic-card p { font-size: 12.5px; color: var(--ls-text-soft); line-height: 1.6; margin-bottom: 16px; }
+    .mic-big {
+      background: var(--ls-accent);
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 800;
+      padding: 12px 26px;
+      cursor: pointer;
+    }
+    .mic-big:hover { filter: brightness(1.08); }
+    .mic-big:disabled { opacity: 0.5; cursor: wait; }
+    .meter {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--ls-control);
+      margin: 16px 0 6px;
+      overflow: hidden;
+    }
+    .meter div {
+      height: 100%;
+      width: 0%;
+      background: var(--ls-good);
+      border-radius: 999px;
+      transition: width 0.08s linear;
+    }
+    .mic-status { min-height: 20px; font-size: 13px; font-weight: 700; margin: 8px 0 12px; }
+    .mic-status .ok { color: var(--ls-good); }
+    .mic-status .bad { color: var(--ls-bad); }
+    .mic-help {
+      text-align: left;
+      font-size: 11.5px;
+      color: var(--ls-text-muted);
+      line-height: 1.6;
+      border-top: 1px solid var(--ls-border);
+      padding-top: 12px;
+    }
+    .mic-help code {
+      background: var(--ls-control);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 10.5px;
+      color: var(--ls-text-soft);
+    }
+  </style>
+</head>
+<body>
+  <div class="mic-card">
+    <h1>🎙 Language<span>Shadow</span> – Microphone</h1>
+    <p>Recording your voice needs a <b>one-time microphone permission</b> from the browser.
+       Audio stays on your device: it is only sent to your <b>local scoring server
+       (127.0.0.1:8000)</b> when <i>you</i> press <b>Score</b> on a take.</p>
+    <button id="btn-ask" class="mic-big">Allow microphone</button>
+    <div id="meter" class="meter hidden"><div id="meter-fill"></div></div>
+    <div id="status" class="mic-status"></div>
+    <div class="mic-help">
+      <b>If the permission stays blocked:</b><br>
+      <b>Chrome:</b> open <code>chrome://settings/content/microphone</code> → make sure this
+      extension is not in the “Not allowed” list, then reload the side panel.<br>
+      <b>Firefox:</b> open <code>about:preferences#privacy</code> → <i>Permissions →
+      Microphone → Settings…</i> → remove any blocked entry, or allow the prompt when it
+      appears at the top-left of the window.
+    </div>
+  </div>
+  <script src="mic-check.js"></script>
+</body>
+</html>

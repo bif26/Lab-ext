@@ -53,6 +53,10 @@
           <option value="3">3</option>
         </select>
       </div>
+      <div class="setting">
+        <label>Microphone</label>
+        <button id="btn-mic-check" class="mini-btn" type="button">Allow / test</button>
+      </div>
       <button id="btn-save-settings" class="save-btn">Save</button>
     </section>
 
@@ -97,9 +101,12 @@
             <span id="rec-timer"></span>
           </button>
           <button id="btn-next" class="ctrl-btn" title="Next line">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 6h2v12H16zM6 18l8.5-6L6 6z"/></svg>
           </button>
         </div>
+
+        <!-- Takes: numbered recordings for the CURRENT caption -->
+        <div id="takes-bar" class="takes-bar hidden"></div>
 
         <!-- Score / takes -->
         <div id="score-area" class="score-area hidden"></div>
