@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LanguageShadow Offline",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "AI Pronunciation Feedback & Shadowing for YouTube (Offline)",
   "author": "Local",
   "icons": {
@@ -15,12 +15,13 @@
     "default_title": "LanguageShadow"
   },
   "background": {
-    "scripts": ["src/background/index.js"],
+    "service_worker": "src/background/index.js",
     "type": "module"
   },
   "side_panel": {
     "default_path": "src/sidepanel/index.html"
   },
+  "minimum_chrome_version": "116",
   "permissions": [
     "sidePanel",
     "storage",
@@ -45,11 +46,6 @@
       "world": "MAIN"
     }
   ],
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "languageshadow@your-email.com"
-    }
-  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:8000 http://127.0.0.1:8765; default-src 'self';"
   }

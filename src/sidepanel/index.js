@@ -98,6 +98,7 @@
   // Local scoring server status (auto-connect)
   let serverState = 'checking';  // 'checking' | 'online' | 'starting' | 'offline'
   let serverInfo = null;         // last health payload from the background
+  let bgBroken = false;          // true = extension background not reachable (reload needed)
   let healthTimer = null;
 
   // ------------------------------------------------------------------
@@ -130,17 +131,21 @@
     const loaded = serverInfo && serverInfo.model_loaded === true ? 'loaded' : 'loads on first use';
     const workerUp = serverInfo && serverInfo.worker && serverInfo.worker.up;
     const managerUp = serverInfo && serverInfo.manager && serverInfo.manager.up;
-    el.title = `Local model (LanguageShadow)\n` +
-      `Manager (127.0.0.1:8765): ${managerUp ? 'running' : 'not reachable'}\n` +
-      `AI worker (127.0.0.1:8000): ${workerUp ? 'running' : 'not running (auto-starts on demand)'}\n` +
-      `Model: ${model} (${loaded})\n` +
-      `Click to re-check · start the stack with: cd languageshadow && ./start_manager.sh`;
+    el.title = bgBroken
+      ? `The extension background is not running (this is an extension problem, not the AI server).\n` +
+        `Fix: chrome://extensions → LanguageShadow → reload (⟳), then refresh the YouTube tab.`
+      : `Local model (LanguageShadow)\n` +
+        `Manager (127.0.0.1:8765): ${managerUp ? 'running' : 'not reachable'}\n` +
+        `AI worker (127.0.0.1:8000): ${workerUp ? 'running' : 'not running (auto-starts on demand)'}\n` +
+        `Model: ${model} (${loaded})\n` +
+        `Click to re-check · start the stack with: cd languageshadow && ./start_manager.sh`;
   }
 
   async function pollHealth() {
     try {
       const h = await api.runtime.sendMessage({ name: 'health-check' });
       serverInfo = h || null;
+      bgBroken = false;
       const managerUp = !!(h && h.manager && h.manager.up);
       const workerUp = !!(h && h.worker && h.worker.up);
       if (workerUp || (managerUp && h.manager.model_loaded)) serverState = 'online';
@@ -149,6 +154,10 @@
     } catch (e) {
       serverState = 'offline';
       serverInfo = null;
+      // "Could not establish connection" / "Extension context invalidated" =
+      // the BACKGROUND is dead (e.g. manifest error or stale page after an
+      // update) – NOT an offline AI server. Show the right hint for it.
+      bgBroken = /receiving end|establish connection|context invalidated/i.test((e && e.message) || '');
     }
     renderServerStatus();
   }
@@ -406,8 +415,12 @@
       result = { status: 'ERROR', error: e.message };
     }
     clearTimeout(coldHint);
-    const offline = !!result && (result.offline === true ||
-      (result.status === 'ERROR' && /fetch|network|reachable|refused|timeout/i.test(result.error || '')));
+    const errText = (result && result.error) || '';
+    // "Receiving end does not exist" / "context invalidated" = the extension
+    // background is dead (reload the extension) – different from a server outage.
+    const bgDead = /receiving end|establish connection|context invalidated/i.test(errText);
+    const offline = !!result && (result.offline === true || bgDead ||
+      (result.status === 'ERROR' && /fetch|network|reachable|refused|timeout/i.test(errText)));
     // The score is SAVED on this take – switching takes shows each own result.
     t.result = result;
     t.score = extractScore(result);
@@ -416,12 +429,16 @@
     if (offline) {
       serverState = 'offline';
       renderServerStatus();
+      const body = bgDead
+        ? `<b>Take ${i + 1} kept — score pending.</b><br>` +
+          `The extension background is not running (extension problem, not the AI server).<br>` +
+          `Fix: <code>chrome://extensions</code> → LanguageShadow → reload (⟳), then refresh the YouTube tab.<br>`
+        : `<b>Take ${i + 1} kept — score pending.</b><br>` +
+          `The local scoring server (127.0.0.1:8765 / 127.0.0.1:8000) is not reachable.<br>` +
+          `Start it with <code>cd languageshadow && ./start_manager.sh</code> — the extension then ` +
+          `connects and scores automatically.<br>`;
       area.innerHTML =
-        `<div class="score-offline">` +
-        `<b>Take ${i + 1} kept — score pending.</b><br>` +
-        `The local scoring server (127.0.0.1:8765 / 127.0.0.1:8000) is not reachable.<br>` +
-        `Start it with <code>cd languageshadow && ./start_manager.sh</code> — the extension then ` +
-        `connects and scores automatically.<br>` +
+        `<div class="score-offline">${body}` +
         `<button class="mini-btn" id="score-retry">↻ Retry now</button></div>`;
       const retry = $('score-retry');
       if (retry) retry.addEventListener('click', () => {

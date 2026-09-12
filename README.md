@@ -17,6 +17,61 @@ plus follow-up fixes reported after testing:
 10. **"Firefox cannot open a sidebar from a page-button click – use a keyboard shortcut + keep the button lighting"** (v1.3.0)
 11. **"I need the API example (audio + caption in, best scoring out), a mic-permission page, multi-take recording with a Score button, and auto-cleanup for RAM"** (v1.4.0)
 12. **"I built my own local model (LanguageShadow) — the extension must connect to it automatically and use it"** (v1.5.0)
+13. **"'background.scripts' requires manifest version of 2 or lower" — the button doesn't open the panel, the panel says AI offline although the local AI is running** (v1.5.1)
+
+---
+
+## v1.5.1 – Chrome manifest regression fixed (background service worker restored)
+
+### What broke
+
+Commit *"Firefox compatibility"* overwrote the **root** `manifest.json` with the
+Firefox-style background key:
+
+```json
+"background": { "scripts": ["src/background/index.js"], "type": "module" }
+```
+
+Chrome MV3 only accepts `background.service_worker` — loading the folder in
+Chrome fails with **"'background.scripts' requires manifest version of 2 or
+lower"** and the background never starts. That single failure explains every
+symptom reported:
+
+| Symptom | Why |
+|---|---|
+| `background.scripts requires manifest version of 2 or lower` | Firefox-style background key in the Chrome manifest |
+| LS button on YouTube doesn't open the side panel | `LS_OPEN_SIDE_PANEL` → `runtime.sendMessage` → no background listener → `Could not establish connection. Receiving end does not exist` |
+| Panel says `AI · offline` while the local model is running | the panel's `health-check` message hits the same dead background → treated as offline |
+| `[LS] runtime message failed: Could not establish connection` | content script → bridge → background with no receiver |
+| `timedtext fetch failed` | session in a broken extension state; primary subtitle capture (player response / signed URLs) recovers after the fix + tab refresh |
+
+### The fix
+
+- **Root `manifest.json` (Chrome)** is a proper Chrome MV3 manifest again:
+  `background: { service_worker: "src/background/index.js", type: "module" }`,
+  `side_panel`, no Firefox-only keys. Version **1.5.1**.
+- **`firefox/manifest.json` (Firefox)** keeps the Firefox MV3 layout
+  (`background.scripts` event page + `sidebar_action` + gecko settings).
+  Firefox never accepted `service_worker`, so the two manifests MUST differ —
+  that's why the repo has a `firefox/` copy.
+- **Rule of thumb for loading**:
+  - **Chrome / Edge / Brave** → load the **repo root** (the folder with `popup.html`)
+  - **Firefox** → load **`firefox/manifest.json`** (or install `firefox/languageshadow.xpi`)
+- **Panel hardening**: when the background is dead
+  ("Receiving end does not exist" / "Extension context invalidated") the status
+  pill tooltip and the score-pending card now say **"reload the extension"**
+  (`chrome://extensions` → ⟳ + refresh the YouTube tab) instead of wrongly
+  hinting at the AI server.
+- Both `.xpi` packages rebuilt with the corrected manifest.
+
+### How to verify
+
+1. `chrome://extensions` → remove the broken LanguageShadow entry (it may show
+   an "error" button with the manifest message).
+2. **Load unpacked** → select the **repo root** folder → no errors.
+3. Refresh the YouTube tab → the LS button opens the panel again.
+4. Start the local stack → the pill shows `AI · connected` within 10 s and
+   Score works (worker auto-starts via the manager even after idle-kill).
 
 ---
 
