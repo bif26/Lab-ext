@@ -16,6 +16,67 @@ plus follow-up fixes reported after testing:
 9. **"Tested in Firefox – it refuses to open the side panel"** (v1.2.0)
 10. **"Firefox cannot open a sidebar from a page-button click – use a keyboard shortcut + keep the button lighting"** (v1.3.0)
 11. **"I need the API example (audio + caption in, best scoring out), a mic-permission page, multi-take recording with a Score button, and auto-cleanup for RAM"** (v1.4.0)
+12. **"I built my own local model (LanguageShadow) — the extension must connect to it automatically and use it"** (v1.5.0)
+
+---
+
+## v1.5.0 – Auto-connect to the local LanguageShadow model
+
+### What changed
+
+- **Manager-first scoring (auto-start)**: pressing **Score** now sends the take
+  to the **manager on port 8765 first** (`POST /api/assess-speech` — same
+  request/response shape as the worker, see `API.md`). The manager spawns the
+  AI worker automatically if it was idle-killed, so the model comes back by
+  itself — no manual restart needed. If the manager is not running, the
+  extension falls back to the **worker on port 8000** directly (covers setups
+  that run only the worker).
+- **Live connection status pill**: the panel header shows
+  `AI · connected` / `AI · starting` / `AI · offline`, refreshed every 10 s via
+  a `health-check` message to the background (which probes `/health` on both
+  ports). Hover it for details (manager / worker state, model name, load
+  state); click it to re-check immediately.
+- **Cold-start feedback**: if scoring takes longer than ~3 s (first request
+  spawns the worker + loads the Whisper model), the score card shows
+  "Waking the local AI…" instead of looking frozen.
+- **Actionable offline state**: when no server is reachable the score card
+  shows `Take kept — score pending`, the exact start command
+  (`cd languageshadow && ./start_manager.sh`) and a **↻ Retry now** button —
+  no take is lost, re-scoring is one click once the server is up.
+- **Manifest**: both manifests bumped to **1.5.0**; the Chrome
+  `host_permissions` now use `http://127.0.0.1:8000/*` and
+  `http://127.0.0.1:8765/*` (the old `…/` patterns only matched the root path,
+  which could break fetch on some Chromium builds). CSP `connect-src` already
+  allowed both ports.
+- **Packages rebuilt**: `languageshadow.xpi` and `firefox/languageshadow.xpi`
+  regenerated from the current sources (the committed packages were stale).
+
+### How the auto-connect works
+
+```
+Score click → background POST /api/assess-speech
+                ├─ 1. manager :8765  (auto-starts the worker if stopped,
+                │      tolerates the 2–10 s cold start, 60 s timeout)
+                ├─ 2. worker  :8000  (fallback, direct)
+                └─ both down → "score pending" card + hint + Retry
+Panel header → health-check every 10 s → status pill
+```
+
+The scoring request/response contract is unchanged (`API.md`): the extension
+still sends `{ audio_base64, reference_text, language }` and renders the
+standard scoring JSON (overall, subscores, pace, word chips).
+
+### How to verify
+
+1. Load the extension, open a YouTube video, start shadowing, record a take.
+2. With the stack **stopped**: press Score → the card shows the pending state
+   with the start command and the pill goes red (`AI · offline`).
+3. Start the stack (`./start_manager.sh`) → within 10 s the pill turns green.
+4. Press **↻ Retry now** (or Score again) → the first request may show
+   "Waking the local AI…" while the model loads, then the score card renders
+   (overall + 4 sub-scores + word chips + pace).
+5. Wait 60 s without speaking (worker idle-killed), press Score again → it
+   still works: the manager silently restarts the worker.
 
 ---
 

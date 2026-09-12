@@ -19,6 +19,14 @@
  *   - Each take keeps its own score/result until the user moves to another
  *     caption — then takes are wiped automatically (blob URLs revoked, RAM).
  *   - API contract: see API.md in the package root.
+ *
+ * Auto-connect (v1.5.0):
+ *   - The header shows a LIVE status pill for the local scoring server
+ *     (manager :8765 / worker :8000), refreshed every 10 s via the background.
+ *   - Scoring goes through the background, which talks to the MANAGER first
+ *     (it auto-starts the AI worker) and falls back to the worker directly.
+ *   - While a cold start is running the score card shows a "waking the local
+ *     AI…" state; an offline result offers an actionable hint + Retry.
  */
 (() => {
   // ------------------------------------------------------------------
@@ -36,6 +44,8 @@
     SETTINGS_UPDATED: 'LS_SETTINGS_UPDATED'
   };
   const MAX_RECORDING_MS = 30000;
+  const HEALTH_POLL_MS = 10000;   // status pill refresh
+  const COLD_START_HINT_MS = 3000; // show "waking the AI…" after this long
 
   const LANGUAGES = [
     ['en-US', 'English'],
@@ -85,6 +95,11 @@
   let curCueKey = -1;     // caption change detector → auto cleanup
   const takeAudio = new Audio(); // single playback element (paused on switch)
 
+  // Local scoring server status (auto-connect)
+  let serverState = 'checking';  // 'checking' | 'online' | 'starting' | 'offline'
+  let serverInfo = null;         // last health payload from the background
+  let healthTimer = null;
+
   // ------------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------------
@@ -96,6 +111,53 @@
   const flagOf = (code) => FLAGS[(code || '').split('-')[0]] || '🌐';
   const langLabel = (code) => (LANGUAGES.find((x) => x[0] === code) || [null, code || '—'])[1];
   const relay = (payload) => api.runtime.sendMessage({ type: RELAY_TYPE, payload }).catch(() => {});
+
+  // ------------------------------------------------------------------
+  // Local server status (auto-connect pill + health polling)
+  // ------------------------------------------------------------------
+  function renderServerStatus() {
+    const el = $('server-status');
+    if (!el) return;
+    const label = {
+      checking: 'AI · checking',
+      online: 'AI · connected',
+      starting: 'AI · starting',
+      offline: 'AI · offline'
+    }[serverState] || 'AI · ?';
+    el.className = 'server-status ' + serverState;
+    el.textContent = label;
+    const model = serverInfo && serverInfo.model_name ? serverInfo.model_name : '?';
+    const loaded = serverInfo && serverInfo.model_loaded === true ? 'loaded' : 'loads on first use';
+    const workerUp = serverInfo && serverInfo.worker && serverInfo.worker.up;
+    const managerUp = serverInfo && serverInfo.manager && serverInfo.manager.up;
+    el.title = `Local model (LanguageShadow)\n` +
+      `Manager (127.0.0.1:8765): ${managerUp ? 'running' : 'not reachable'}\n` +
+      `AI worker (127.0.0.1:8000): ${workerUp ? 'running' : 'not running (auto-starts on demand)'}\n` +
+      `Model: ${model} (${loaded})\n` +
+      `Click to re-check · start the stack with: cd languageshadow && ./start_manager.sh`;
+  }
+
+  async function pollHealth() {
+    try {
+      const h = await api.runtime.sendMessage({ name: 'health-check' });
+      serverInfo = h || null;
+      const managerUp = !!(h && h.manager && h.manager.up);
+      const workerUp = !!(h && h.worker && h.worker.up);
+      if (workerUp || (managerUp && h.manager.model_loaded)) serverState = 'online';
+      else if (managerUp) serverState = 'starting';  // manager alive, worker not spawned yet
+      else serverState = 'offline';
+    } catch (e) {
+      serverState = 'offline';
+      serverInfo = null;
+    }
+    renderServerStatus();
+  }
+
+  function startHealthPolling() {
+    pollHealth();
+    if (healthTimer) clearInterval(healthTimer);
+    healthTimer = setInterval(pollHealth, HEALTH_POLL_MS);
+  }
 
   // ------------------------------------------------------------------
   // Rendering
@@ -321,6 +383,14 @@
     const area = $('score-area');
     area.classList.remove('hidden');
     area.innerHTML = `<div class="score-title">Scoring take ${i + 1}…</div>`;
+    // Cold starts (the manager spawning the AI worker + loading the model the
+    // first time) can take several seconds – show a matching hint while waiting.
+    const coldHint = setTimeout(() => {
+      if (area.querySelector('.score-title')) {
+        area.innerHTML = `<div class="score-title">Scoring take ${i + 1}…</div>` +
+          `<div class="score-waking"><span class="mini-spinner"></span> Waking the local AI (first use loads the model)…</div>`;
+      }
+    }, COLD_START_HINT_MS);
     const base64 = await new Promise((res) => {
       const fr = new FileReader();
       fr.onload = () => res(String(fr.result).split(',')[1] || '');
@@ -335,15 +405,31 @@
     } catch (e) {
       result = { status: 'ERROR', error: e.message };
     }
-    const offline = !!result && result.status === 'ERROR' && /fetch|network/i.test(result.error || '');
+    clearTimeout(coldHint);
+    const offline = !!result && (result.offline === true ||
+      (result.status === 'ERROR' && /fetch|network|reachable|refused|timeout/i.test(result.error || '')));
     // The score is SAVED on this take – switching takes shows each own result.
     t.result = result;
     t.score = extractScore(result);
     if (btn) { btn.disabled = false; btn.textContent = 'Score'; }
     renderTakesBar();
     if (offline) {
-      area.innerHTML = `<div class="score-offline">✓ Take ${i + 1} kept (score pending). The local scoring server (127.0.0.1:8000) is offline — start it to get scores. Contract: API.md in the package.</div>`;
+      serverState = 'offline';
+      renderServerStatus();
+      area.innerHTML =
+        `<div class="score-offline">` +
+        `<b>Take ${i + 1} kept — score pending.</b><br>` +
+        `The local scoring server (127.0.0.1:8765 / 127.0.0.1:8000) is not reachable.<br>` +
+        `Start it with <code>cd languageshadow && ./start_manager.sh</code> — the extension then ` +
+        `connects and scores automatically.<br>` +
+        `<button class="mini-btn" id="score-retry">↻ Retry now</button></div>`;
+      const retry = $('score-retry');
+      if (retry) retry.addEventListener('click', () => {
+        selTake = i;
+        scoreSelected();
+      });
     } else {
+      if (t.score != null) { serverState = 'online'; renderServerStatus(); }
       renderScoreCard(result, i);
     }
   }
@@ -492,6 +578,8 @@
       const open = p.classList.toggle('open');
       $('btn-settings').classList.toggle('open', open);
     });
+    const ss = $('server-status');
+    if (ss) ss.addEventListener('click', pollHealth);  // manual re-check
     $('btn-save-settings').addEventListener('click', saveSettings);
     $('btn-prev').addEventListener('click', () => relay({ type: CMD.PREV_SENTENCE }));
     $('btn-next').addEventListener('click', () => relay({ type: CMD.NEXT_SENTENCE }));
@@ -507,6 +595,8 @@
     bindEvents();
     fillLanguageSelects();
     renderLangPair();
+    renderServerStatus();
+    startHealthPolling();  // auto-connect: probe + keep the status pill fresh
     try {
       const data = await api.storage.local.get([STATE_KEY, SOURCE_KEY,
         'nativeLanguage', 'targetLanguage', 'subtitleDisplayMode', 'repetitionCount']);

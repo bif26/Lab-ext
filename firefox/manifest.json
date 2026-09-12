@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LanguageShadow Offline",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "description": "AI Pronunciation Feedback & Shadowing for YouTube (Offline)",
   "author": "Local",
   "browser_specific_settings": {
