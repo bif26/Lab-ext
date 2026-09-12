@@ -224,6 +224,16 @@ if (IS_FIREFOX && api.action && api.action.onClicked) {
   });
 }
 
+// First install: let the YouTube tab show the one-time language setup popup
+// (main language + translation language). NOT shown on updates – existing
+// users keep their settings and can use the popup's "Change Language" button.
+api.runtime.onInstalled.addListener((details) => {
+  console.log('[Background] onInstalled:', details.reason);
+  if (details.reason === 'install') {
+    api.storage.local.set({ lsOnboardingPending: true }).catch(() => {});
+  }
+});
+
 // --- Message handling ---
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[Background] Received message:', message);

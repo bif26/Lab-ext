@@ -169,6 +169,14 @@ body {
   flex-shrink: 0;
 }
 .settings-panel.open { display: block; }
+/* Attention pulse when the settings are auto-opened (popup "Change Language"
+   button or after a fallback hint) so users notice where languages live. */
+.settings-panel.flash { animation: ls-settings-flash 1.2s ease-out 1; }
+@keyframes ls-settings-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(249, 115, 22, .55); border-color: #f97316; }
+  70%  { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); border-color: #f97316; }
+  100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
 .settings-panel .setting {
   display: flex;
   justify-content: space-between;

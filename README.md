@@ -18,6 +18,69 @@ plus follow-up fixes reported after testing:
 11. **"I need the API example (audio + caption in, best scoring out), a mic-permission page, multi-take recording with a Score button, and auto-cleanup for RAM"** (v1.4.0)
 12. **"I built my own local model (LanguageShadow) — the extension must connect to it automatically and use it"** (v1.5.0)
 13. **"'background.scripts' requires manifest version of 2 or lower" — the button doesn't open the panel, the panel says AI offline although the local AI is running** (v1.5.1)
+14. **"The extension set main lang es but the video is de, and I can't change it in the sidepanel settings" + first-install language chooser** (v1.6.0)
+
+---
+
+## v1.6.0 – Video-language auto-detect, working language dropdown, first-run setup popup
+
+### What you saw
+
+```
+[LS] Enable failed: no subtitles available for "es" on this video
+This document requires 'TrustedHTML' assignment. The action has been blocked.
+```
+
+The video speaks **German**, the extension was set to **Spanish**, and changing
+the language in the side panel settings seemed to do nothing.
+
+### What v1.6.0 changes
+
+1. **The extension now knows the video's own language.** Before fetching
+   subtitles it reads the video's caption-track list (`movie_player` →
+   `getPlayerResponse()`) and its microformat language. If your preferred
+   main language has a caption track it is used as before. If it does NOT
+   exist, LanguageShadow no longer fails – it automatically falls back to the
+   **video's original language** and tells you what it did:
+   * on the video (overlay message: *"Spanish subtitles are not available on
+     this video – using German (the video's language)…"*),
+   * in the panel (the language pair shows the effective language plus a
+     **video language** badge).
+   Your saved preference is never overwritten – the dropdown keeps what YOU
+   picked; only the session adapts to the video.
+2. **Clear errors instead of dead ends.** A video with no captions at all now
+   says exactly that (*"This video has no captions/subtitles at all…"*), and
+   when captions exist but cannot be captured it suggests clicking CC once and
+   pressing LS again (with the list of available languages).
+3. **Language dropdown fixed.** Stored values are normalized to real option
+   values ("de" → "de-DE"), unknown languages get an extra option, and labels
+   resolve by base code – the select can no longer silently end up empty.
+   **Every dropdown now applies the moment you change it** (no hidden
+   "press Save" requirement – the Save button still works too), the change is
+   relayed to the YouTube tab live, and the panel header always shows the
+   language actually being practiced.
+4. **First-run setup popup on the tab.** On first install the background sets
+   a flag; the YouTube tab then shows a small corner popup to choose the
+   **main language** (pre-selected to the detected video language) and the
+   **translation language**, with *Save & start* / *Skip*. Shown once – not
+   after updates. Trusted-Types safe (built with createElement only).
+5. **Scoring uses the effective language.** A recorded take is scored against
+   the language the video actually speaks, not the raw preference, so German
+   audio is scored as German even if the preference dropdown says Spanish.
+6. **Toolbar popup "Change Language" now works.** It used to set a session
+   flag nobody read; now the side panel opens its settings section with a
+   short highlight pulse.
+7. **Root `languageshadow.xpi` rebuilt clean** – the old package accidentally
+   contained the whole `firefox/` folder (the likely source of the earlier
+   "background.scripts" confusion when installing from the zip).
+
+### About the TrustedHTML console line
+
+`This document requires 'TrustedHTML' assignment` is YouTube policing its own
+page (it forbids `innerHTML` for page scripts). LanguageShadow v1.6.0 contains
+**zero** `innerHTML`/`outerHTML`/`document.write` calls in code that runs on
+YouTube pages – the warning comes from YouTube itself or another extension and
+is harmless for LanguageShadow.
 
 ---
 

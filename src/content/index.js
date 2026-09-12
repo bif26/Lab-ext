@@ -65,6 +65,38 @@
     SEEK_CUE: 'LS_SEEK_CUE'
   };
 
+  // Mirror of the side panel LANGUAGES list (kept in sync manually).
+  // Used by the first-run onboarding popup and to turn a detected video
+  // language ("de") into the panel's code format ("de-DE").
+  const LANGUAGES = [
+    ['en-US', 'English'],
+    ['de-DE', 'German · Deutsch'],
+    ['ar-AR', 'Arabic · العربية'],
+    ['es-ES', 'Spanish · Español'],
+    ['fr-FR', 'French · Français'],
+    ['it-IT', 'Italian · Italiano'],
+    ['pt-BR', 'Portuguese · Português'],
+    ['ru-RU', 'Russian · Русский'],
+    ['ja-JP', 'Japanese · 日本語'],
+    ['ko-KR', 'Korean · 한국어'],
+    ['zh-CN', 'Chinese · 中文'],
+    ['tr-TR', 'Turkish · Türkçe'],
+    ['nl-NL', 'Dutch · Nederlands'],
+    ['pl-PL', 'Polish · Polski'],
+    ['hi-IN', 'Hindi · हिन्दी'],
+    ['sv-SE', 'Swedish · Svenska']
+  ];
+  const LANG_NAME = { en: 'English', de: 'German', ar: 'Arabic', es: 'Spanish', fr: 'French', it: 'Italian', pt: 'Portuguese', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', tr: 'Turkish', nl: 'Dutch', pl: 'Polish', hi: 'Hindi', sv: 'Swedish' };
+
+  const normLang = (code) => (code || '').split('-')[0].toLowerCase();
+  const langName = (code) => LANG_NAME[normLang(code)] || (code || '?');
+  // "de" -> "de-DE" (panel dropdown format); unknown codes stay as-is
+  function fullLangCode(code) {
+    const base = normLang(code);
+    const hit = LANGUAGES.find(([c]) => normLang(c) === base);
+    return hit ? hit[0] : (code || base || '');
+  }
+
   const log = (...a) => console.log('[LS]', ...a);
   const warn = (...a) => console.warn('[LS]', ...a);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -89,7 +121,14 @@
     nativePointer: 0,
     abA: null,
     abB: null,
-    abLooping: false
+    abLooping: false,
+    // Language ACTUALLY used for the main (practice) line. Normally equals
+    // settings.targetLanguage, but when the video has no captions in the
+    // preferred language it becomes the video's original language and
+    // languageFallback is flagged so the panel can show a "video language"
+    // badge. The user's PREFERENCE in storage is never overwritten.
+    effectiveTarget: null,
+    languageFallback: false
   };
 
   // ------------------------------------------------------------------
@@ -496,7 +535,11 @@
       } catch (e) { /* ignore */ }
     }
 
-    throw new Error(`no subtitles available for "${langPref}" on this video`);
+    if (!tracks.length) {
+      throw new Error('This video has no captions/subtitles at all – LanguageShadow needs captions to work. Try a video where the CC button offers languages.');
+    }
+    const avail = tracks.map((t) => t.languageCode).join(', ');
+    throw new Error(`Captions exist (${avail}) but could not be loaded – click the CC button once, then press the LS button again.`);
   }
 
   // ------------------------------------------------------------------
@@ -656,7 +699,24 @@
       'transition:color .15s ease,background .15s ease}',
       '.ytp-button.ls-btn.ls-active{background:rgba(249,115,22,.95);border-radius:6px;',
       'box-shadow:0 0 0 2px rgba(249,115,22,.35)}',
-      '.ytp-button.ls-btn.ls-active .ls-btn-label{color:#1c1917}'
+      '.ytp-button.ls-btn.ls-active .ls-btn-label{color:#1c1917}',
+      // First-run onboarding popup
+      '#ls-onboarding{position:fixed;top:16px;right:16px;z-index:2147483647;width:300px;',
+      'background:#1c1917;color:#fafaf9;border:1px solid rgba(249,115,22,.55);border-radius:14px;',
+      'padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-family:Roboto,Arial,sans-serif}',
+      '#ls-onboarding .ls-ob-title{margin:0 0 6px;font-size:15px;font-weight:800;color:#f97316}',
+      '#ls-onboarding .ls-ob-sub{margin:0 0 4px;font-size:12px;line-height:1.5;color:#d6d3d1}',
+      '#ls-onboarding label{display:block;font-size:11.5px;font-weight:700;color:#a8a29e;margin:10px 0 4px;letter-spacing:.02em}',
+      '#ls-onboarding select{width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;',
+      'border:1px solid #57534e;background:#292524;color:#fafaf9;font-size:13px;outline:none}',
+      '#ls-onboarding select:focus{border-color:#f97316}',
+      '#ls-onboarding .ls-ob-actions{display:flex;gap:8px;margin-top:14px}',
+      '#ls-onboarding button{flex:1;padding:8px 10px;border-radius:8px;border:none;',
+      'font-size:12.5px;font-weight:800;cursor:pointer}',
+      '#ls-onboarding .ls-ob-save{background:#f97316;color:#1c1917}',
+      '#ls-onboarding .ls-ob-save:hover{background:#fb923c}',
+      '#ls-onboarding .ls-ob-skip{background:#44403c;color:#e7e5e4}',
+      '#ls-onboarding .ls-ob-skip:hover{background:#57534e}'
     ].join('');
     document.head.appendChild(st);
   }
@@ -767,7 +827,12 @@
         active: session.active,
         videoId: session.videoId,
         title: (document.title || '').replace(' - YouTube', ''),
-        targetLanguage: settings.targetLanguage,
+        // EFFECTIVE language (what the main line actually speaks). When the
+        // video has no captions in the preferred language this is the video's
+        // own language and languageFallback flags it for the panel badge.
+        targetLanguage: session.effectiveTarget || settings.targetLanguage,
+        requestedLanguage: settings.targetLanguage,
+        languageFallback: !!session.languageFallback,
         nativeLanguage: settings.nativeLanguage,
         currentCueIndex: session.currentCueIndex,
         currentCue: cue
@@ -796,7 +861,9 @@
     storageSet({
       [SESSION_SUBTITLE_SOURCE_KEY]: {
         videoId: session.videoId,
-        language: (track && track.languageCode) || settings.targetLanguage,
+        language: (track && track.languageCode) || session.effectiveTarget || settings.targetLanguage,
+        requestedLanguage: settings.targetLanguage,
+        languageFallback: !!session.languageFallback,
         languageName: (track && (track.languageName || track.displayName)) || '',
         kind: (track && track.kind) || 'manual',
         displayMode: settings.subtitleDisplayMode,
@@ -909,12 +976,61 @@
     }
   }
 
-  async function enableShadowing() {
-    const targetCode = (settings.targetLanguage || 'en').split('-')[0];
-    const nativeCode = (settings.nativeLanguage || '').split('-')[0];
+  // ------------------------------------------------------------------
+  // Language resolution: preferred language vs. what the video actually
+  // offers. Fixes the "extension set main lang es but the video is de"
+  // problem: when the preferred language has no caption track we fall
+  // back to the VIDEO'S ORIGINAL language automatically and tell the
+  // user (panel badge + overlay message) instead of failing.
+  // ------------------------------------------------------------------
+  function resolveTargetLanguage() {
+    const preferred = settings.targetLanguage || 'en';
+    const prefBase = normLang(preferred);
+    const tracks = getCaptionTracks();
+    if (!tracks.length) return { effective: preferred, fallback: false, tracks };
 
-    log('Fetching subtitles for target language:', settings.targetLanguage);
-    const { cues, track } = await fetchSubtitles(targetCode, { strict: false });
+    const hasTrack = (base) => tracks.some((t) => normLang(t.languageCode) === base);
+    if (hasTrack(prefBase)) return { effective: preferred, fallback: false, tracks };
+
+    // Preferred language not available – use the video's original language
+    // (first caption track is usually it; microformat as backup).
+    const original = getVideoOriginalLanguage();
+    if (original && hasTrack(normLang(original))) {
+      return { effective: original, fallback: true, tracks };
+    }
+    // Last resort: whatever manual track the video has (ASR last).
+    const any = tracks.find((t) => t.kind !== 'asr') || tracks[0];
+    if (any && any.languageCode) {
+      return { effective: any.languageCode, fallback: true, tracks };
+    }
+    return { effective: preferred, fallback: false, tracks };
+  }
+
+  // Shared loader for enableShadowing() and refreshSubtitles().
+  async function loadSessionCues() {
+    const prefCode = settings.targetLanguage || 'en';
+    const prefBase = normLang(prefCode);
+    const { effective, fallback } = resolveTargetLanguage();
+
+    log(`Target language: preferred="${prefCode}" effective="${effective}"` + (fallback ? ' (video-language fallback)' : ''));
+    const { cues, track } = await fetchSubtitles(normLang(effective), { strict: false });
+
+    session.effectiveTarget = (track && track.languageCode) || effective;
+    session.languageFallback = fallback || normLang(session.effectiveTarget) !== prefBase;
+
+    if (session.languageFallback) {
+      const msg = `${langName(prefCode)} subtitles are not available on this video – using ${langName(session.effectiveTarget)} (the video's language). Change the main language in the panel settings (gear) if needed.`;
+      warn(msg);
+      // Surface it in two places: on the video and in the panel (badge via state).
+      showTransientOverlayMessage(msg);
+    }
+    return { cues, track };
+  }
+
+  async function enableShadowing() {
+    const { cues, track } = await loadSessionCues();
+    const targetCode = session.effectiveTarget || settings.targetLanguage;
+    const nativeCode = (settings.nativeLanguage || '').split('-')[0];
 
     session.cues = cues;
     session.currentCueIndex = -1;
@@ -925,8 +1041,8 @@
     // Auto-translates through YouTube when the video has no native track.
     session.nativeCues = [];
     let translationSource = 'none';
-    if (nativeCode && nativeCode !== targetCode) {
-      const nat = await getNativeCues(track, targetCode, nativeCode);
+    if (nativeCode && nativeCode !== normLang(targetCode)) {
+      const nat = await getNativeCues(track, normLang(targetCode), nativeCode);
       session.nativeCues = nat.cues;
       session.nativePointer = 0;
       translationSource = nat.source;
@@ -960,16 +1076,16 @@
   async function refreshSubtitles() {
     log('Refreshing subtitles for new languages...');
     try {
-      const targetCode = (settings.targetLanguage || 'en').split('-')[0];
+      const { cues, track } = await loadSessionCues();
+      const targetCode = session.effectiveTarget || settings.targetLanguage;
       const nativeCode = (settings.nativeLanguage || '').split('-')[0];
-      const { cues, track } = await fetchSubtitles(targetCode, { strict: false });
       session.cues = cues;
       session.currentCueIndex = -1;
       session.nativePointer = 0;
       session.nativeCues = [];
       let translationSource = 'none';
-      if (nativeCode && nativeCode !== targetCode) {
-        const nat = await getNativeCues(track, targetCode, nativeCode);
+      if (nativeCode && nativeCode !== normLang(targetCode)) {
+        const nat = await getNativeCues(track, normLang(targetCode), nativeCode);
         session.nativeCues = nat.cues;
         session.nativePointer = 0;
         translationSource = nat.source;
@@ -1081,11 +1197,119 @@
     session.nativeCues = [];
     session.currentCueIndex = -1;
     session.nativePointer = 0;
+    session.effectiveTarget = null;
+    session.languageFallback = false;
     if (wasActive) disableShadowing();
     if (location.pathname === '/watch') {
       startButtonInjection();
       attachVideoListeners();
     }
+  }
+
+  // ------------------------------------------------------------------
+  // First-run onboarding: a small popup in the corner of the YouTube tab
+  // asking for the main (practice) language and the translation language.
+  // Shown once, when the background flagged lsOnboardingPending on install.
+  // Trusted-Types safe: built with createElement/textContent only.
+  // ------------------------------------------------------------------
+  function fillLangSelectForOnboarding(sel, selectedCode, detectedOriginal) {
+    // Ensure the detected video language exists in the list (e.g. "de" is
+    // covered, but rare languages would be missing) and preselect it.
+    const codes = LANGUAGES.map(([c]) => c);
+    if (detectedOriginal && !codes.some((c) => normLang(c) === normLang(detectedOriginal))) {
+      const opt = document.createElement('option');
+      opt.value = fullLangCode(detectedOriginal);
+      opt.textContent = langName(detectedOriginal) + ' · ' + detectedOriginal;
+      sel.appendChild(opt);
+    }
+    for (const [code, label] of LANGUAGES) {
+      const opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    }
+    const wantFull = fullLangCode(selectedCode || detectedOriginal || codes[0]);
+    const wantBase = normLang(wantFull);
+    const match = Array.from(sel.options).find((o) => normLang(o.value) === wantBase);
+    sel.value = match ? match.value : sel.options[0].value;
+  }
+
+  async function maybeShowOnboarding() {
+    let flag = null;
+    try {
+      const st = await storageGet(['lsOnboardingPending']);
+      flag = st && st.lsOnboardingPending;
+    } catch (e) { /* bridge not ready – skip silently */ }
+    if (!flag) return;
+    if (document.getElementById('ls-onboarding')) return;
+    log('First run detected – showing the language setup popup.');
+
+    ensureStyles();
+    const box = document.createElement('div');
+    box.id = 'ls-onboarding';
+
+    const title = document.createElement('div');
+    title.className = 'ls-ob-title';
+    title.textContent = 'LanguageShadow · Setup';
+
+    const sub = document.createElement('p');
+    sub.className = 'ls-ob-sub';
+    sub.textContent = 'Pick your languages. The orange LS button in the player starts shadowing. You can change these anytime in the panel settings (gear).';
+
+    const detected = getVideoOriginalLanguage();
+
+    const lblTarget = document.createElement('label');
+    lblTarget.textContent = 'Main language (I practice in…)';
+    const selTarget = document.createElement('select');
+    fillLangSelectForOnboarding(selTarget, settings.targetLanguage, detected);
+
+    const lblNative = document.createElement('label');
+    lblNative.textContent = 'Translation language (show subtitles in…)';
+    const selNative = document.createElement('select');
+    fillLangSelectForOnboarding(selNative, settings.nativeLanguage, null);
+
+    const actions = document.createElement('div');
+    actions.className = 'ls-ob-actions';
+    const btnSave = document.createElement('button');
+    btnSave.className = 'ls-ob-save';
+    btnSave.textContent = 'Save & start';
+    const btnSkip = document.createElement('button');
+    btnSkip.className = 'ls-ob-skip';
+    btnSkip.textContent = 'Skip';
+
+    actions.appendChild(btnSave);
+    actions.appendChild(btnSkip);
+    box.appendChild(title);
+    box.appendChild(sub);
+    box.appendChild(lblTarget);
+    box.appendChild(selTarget);
+    box.appendChild(lblNative);
+    box.appendChild(selNative);
+    box.appendChild(actions);
+    (document.body || document.documentElement).appendChild(box);
+
+    const close = () => { try { box.remove(); } catch (e) { /* ignore */ } };
+
+    btnSkip.addEventListener('click', async () => {
+      close();
+      try { await bridgeCall('storage.remove', { keys: ['lsOnboardingPending'] }); } catch (e) { /* ignore */ }
+    });
+
+    btnSave.addEventListener('click', async () => {
+      settings.targetLanguage = fullLangCode(selTarget.value);
+      settings.nativeLanguage = fullLangCode(selNative.value);
+      log('Onboarding saved languages:', settings.targetLanguage, '/', settings.nativeLanguage);
+      close();
+      try {
+        await storageSet({
+          targetLanguage: settings.targetLanguage,
+          nativeLanguage: settings.nativeLanguage
+        });
+        await bridgeCall('storage.remove', { keys: ['lsOnboardingPending'] });
+      } catch (e) { warn('Onboarding save failed:', (e && e.message) || e); }
+      // If a session is already running, apply the new languages immediately.
+      if (session.active) refreshSubtitles();
+    });
   }
 
   async function init() {
@@ -1099,6 +1323,7 @@
     await loadSettings();
     startButtonInjection();
     attachVideoListeners();
+    maybeShowOnboarding();
   }
 
   document.addEventListener('yt-navigate-finish', onNavigate, true);

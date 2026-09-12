@@ -109,8 +109,14 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-  const flagOf = (code) => FLAGS[(code || '').split('-')[0]] || '🌐';
-  const langLabel = (code) => (LANGUAGES.find((x) => x[0] === code) || [null, code || '—'])[1];
+  const normLang = (code) => (code || '').split('-')[0].toLowerCase();
+  const flagOf = (code) => FLAGS[normLang(code)] || '🌐';
+  // Matches by full code first, then by base ("de" still finds "de-DE"),
+  // so caption-track codes like "de" or "pt" render a proper label.
+  const langLabel = (code) => {
+    const hit = LANGUAGES.find(([c]) => c === code) || LANGUAGES.find(([c]) => normLang(c) === normLang(code));
+    return hit ? hit[1] : (code || '—');
+  };
   const relay = (payload) => api.runtime.sendMessage({ type: RELAY_TYPE, payload }).catch(() => {});
 
   // ------------------------------------------------------------------
@@ -177,8 +183,17 @@
     $('view-session').classList.toggle('hidden', name !== 'session');
   }
 
+  let lastLangPairKey = null;
+
   function renderLangPair() {
-    // Translation source badge: tells the user HOW the second line is produced
+    // The MAIN line shows the EFFECTIVE language of the session (what the
+    // video actually speaks), not just the user's preference: when the video
+    // has no captions in the preferred language the content script falls
+    // back to the video's own language and flags it (languageFallback).
+    const active = !!(state && state.active);
+    const effMain = (active && state && state.targetLanguage) || settings.targetLanguage;
+    const fellBack = !!(active && state && state.languageFallback && state.requestedLanguage &&
+      normLang(state.requestedLanguage) !== normLang(effMain));
     const srcBadge = !source || !source.cues ? '' :
       source.translationSource === 'auto-translate'
         ? '<span class="src-badge">auto-translated</span>'
@@ -189,9 +204,17 @@
             : source.translationSource === 'none'
               ? '<span class="src-badge warn">no translation on this video</span>'
               : '';
+    const fallbackBadge = fellBack
+      ? `<span class="src-badge warn" title="${esc(langLabel(state.requestedLanguage))} subtitles are not available on this video – using the video's language. Change it in the settings (gear).">video language</span>`
+      : '';
+    // Rebuild only when something actually changed – this is called on every
+    // state push (~1/s while the video plays).
+    const key = [active, effMain, fellBack, settings.nativeLanguage, source && source.translationSource].join('|');
+    if (key === lastLangPairKey) return;
+    lastLangPairKey = key;
     $('lang-pair').innerHTML =
-      `<div class="lang-main"><span class="flag">${flagOf(settings.targetLanguage)}</span>` +
-      `<span class="lang-name">${esc(langLabel(settings.targetLanguage))}</span></div>` +
+      `<div class="lang-main"><span class="flag">${flagOf(effMain)}</span>` +
+      `<span class="lang-name">${esc(langLabel(effMain))}</span>${fallbackBadge}</div>` +
       `<div class="lang-sub"><span class="arrow">↓</span>` +
       `<span class="lang-name">translated to ${esc(langLabel(settings.nativeLanguage))}</span>${srcBadge}</div>`;
   }
@@ -252,6 +275,7 @@
     activeIndex = idx;
     // Moving to another caption frees the recordings of the old one (RAM).
     if (idx !== curCueKey) { curCueKey = idx; clearTakes(); }
+    renderLangPair();  // keyed: rebuilds only when the language pair changed
     renderCurrent();
     const box = $('transcript');
     const prev = box.querySelector('.transcript-cue.active');
@@ -496,7 +520,10 @@
     // Freeze WHICH caption this take belongs to at record start, so a later
     // cue change cannot mix up the reference text.
     recRef = cur.target;
-    recLang = settings.targetLanguage;
+    // Use the EFFECTIVE session language (state.targetLanguage – what the
+    // video actually speaks after the video-language fallback), NOT the raw
+    // preference, so the AI scores the audio against the right language.
+    recLang = (state && state.targetLanguage) || settings.targetLanguage;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
@@ -548,8 +575,24 @@
     const opts = LANGUAGES.map(([code, label]) => `<option value="${code}">${esc(label)}</option>`).join('');
     $('set-target').innerHTML = opts;
     $('set-native').innerHTML = opts;
-    $('set-target').value = settings.targetLanguage;
-    $('set-native').value = settings.nativeLanguage;
+    // Stored values may come from older versions or the content script in a
+    // different format ("de" vs "de-DE"). Normalize to a REAL option value –
+    // otherwise the browser leaves the select empty and the dropdown appears
+    // to "not work". Unknown languages are added as an extra option.
+    const setSelect = (el, raw) => {
+      const code = String(raw || '');
+      let match = Array.from(el.options).find((o) => o.value === code) ||
+        Array.from(el.options).find((o) => normLang(o.value) === normLang(code));
+      if (!match && code) {
+        match = document.createElement('option');
+        match.value = code;
+        match.textContent = langLabel(code);
+        el.appendChild(match);
+      }
+      el.value = match ? match.value : el.options[0].value;
+    };
+    setSelect($('set-target'), settings.targetLanguage);
+    setSelect($('set-native'), settings.nativeLanguage);
     $('set-mode').value = settings.subtitleDisplayMode;
     $('set-repeat').value = String(settings.repetitionCount);
   }
@@ -598,6 +641,13 @@
     const ss = $('server-status');
     if (ss) ss.addEventListener('click', pollHealth);  // manual re-check
     $('btn-save-settings').addEventListener('click', saveSettings);
+    // The dropdowns must WORK without hunting for the Save button: apply
+    // instantly on change (saveSettings also relays LS_SETTINGS_UPDATED to
+    // the YouTube tab, which refetches subtitles when a session is active).
+    ['set-target', 'set-native', 'set-mode', 'set-repeat'].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener('change', saveSettings);
+    });
     $('btn-prev').addEventListener('click', () => relay({ type: CMD.PREV_SENTENCE }));
     $('btn-next').addEventListener('click', () => relay({ type: CMD.NEXT_SENTENCE }));
     $('btn-repeat').addEventListener('click', () => relay({ type: CMD.REPEAT_SEGMENT }));
@@ -606,6 +656,32 @@
     if (mic) mic.addEventListener('click', () => {
       api.tabs.create({ url: api.runtime.getURL('src/sidepanel/mic-check.html') });
     });
+  }
+
+  // The toolbar popup's "Change Language" button sets this session flag and
+  // then opens the panel – open the settings section automatically.
+  async function openSettingsIfRequested() {
+    try {
+      if (!api.storage.session) return;
+      const data = await api.storage.session.get('lsRequestLanguageSetup');
+      if (data && data.lsRequestLanguageSetup) {
+        await api.storage.session.remove('lsRequestLanguageSetup');
+        openSettingsPanel();
+      }
+    } catch (e) { /* storage.session unavailable – ignore */ }
+  }
+
+  function openSettingsPanel() {
+    const p = $('settings-panel');
+    if (!p) return;
+    p.classList.add('open');
+    const gear = $('btn-settings');
+    if (gear) gear.classList.add('open');
+    try { p.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+    // Small attention pulse so the user notices where the languages live.
+    p.classList.remove('flash');
+    void p.offsetWidth;  // restart the CSS animation
+    p.classList.add('flash');
   }
 
   async function init() {
@@ -628,8 +704,14 @@
     } catch (e) {
       showView('waiting');
     }
+    openSettingsIfRequested();
 
     api.storage.onChanged.addListener((changes, area) => {
+      // "Change Language" popup button (flag written to the SESSION area)
+      if (area === 'session' && changes.lsRequestLanguageSetup && changes.lsRequestLanguageSetup.newValue) {
+        openSettingsIfRequested();
+        return;
+      }
       if (area !== 'local') return;
       if (changes[STATE_KEY]) {
         state = changes[STATE_KEY].newValue;
